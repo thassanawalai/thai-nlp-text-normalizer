@@ -2,36 +2,36 @@ import streamlit as st
 import re
 from pythainlp.tokenize import word_tokenize
 
-# --- ฟังก์ชันพระเอกของเรา (ลอจิกเดิมเป๊ะๆ) ---
+# --- Our main function (same logic) ---
 def normalize_elongated(text):
     normalized_text = re.sub(r'(.)\1{2,}', r'\1', text)
     return normalized_text
 
-# --- ส่วนออกแบบหน้าเว็บ ---
+# --- Web UI ---
 st.title("✨ Thai NLP: Word Elongation Handler")
-st.markdown("บอกลาปัญหาพิมพ์ลากเสียงยาว เช่น **'สวัสดีค้าบบบบ'** ให้ AI ตัดคำได้แม่นยำขึ้น!")
+st.markdown("Fix elongated typing to improve AI tokenization accuracy!")
 
-# ช่องรับข้อความจากผู้ใช้
-user_input = st.text_input("💬 พิมพ์ข้อความที่ต้องการทดสอบตรงนี้เลย:", "สวัสดีค้าบบบบ วันนี้อากาศดีจังเลยยยยย")
+# User input field
+user_input = st.text_input("💬 Enter text to test here:")
 
-# ปุ่มกดประมวลผล
-if st.button("🚀 รันเลย!"):
+# Processing button
+if st.button("🚀 Run Now!"):
     if user_input:
-        st.divider() # เส้นคั่น
+        st.divider() # Divider
         
-        # 1. โชว์ผลลัพธ์แบบยังไม่แก้
-        st.subheader("🔴 ก่อนแก้ (Before Normalization):")
+        # 1. Show tokens before normalization
+        st.subheader("🔴 Before Normalization:")
         before_tokens = word_tokenize(user_input, engine='newmm')
         st.write(before_tokens)
 
-        # 2. คลีนข้อความ
+        # 2. Clean the text
         cleaned_text = normalize_elongated(user_input)
-        st.subheader("✨ ข้อความที่คลีนแล้ว:")
-        st.info(cleaned_text) # โชว์ในกล่องสีฟ้าสวยๆ
+        st.subheader("✨ Cleaned Text:")
+        st.info(cleaned_text) # Display in an info box
 
-        # 3. โชว์ผลลัพธ์หลังแก้
-        st.subheader("🟢 หลังแก้ (After Normalization):")
+        # 3. Show tokens after normalization
+        st.subheader("🟢 After Normalization:")
         after_tokens = word_tokenize(cleaned_text, engine='newmm')
-        st.success(after_tokens) # โชว์ในกล่องสีเขียว
+        st.success(after_tokens) # Display in a success box
     else:
-        st.warning("หนูต้องพิมพ์ข้อความก่อนน้าา!")
+        st.warning("Please enter some text first!")

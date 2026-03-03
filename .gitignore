@@ -1,10 +1,10 @@
-# ไม่เอาไฟล์ระบบของ Python
+# Ignore Python system files
 __pycache__/
 *.pyc
 
-# ไม่เอาไฟล์ Dataset ดิบที่ใหญ่เกินไป (เราอัปแค่ slang_dataset.csv )
+# Ignore large raw datasets (we only include slang_dataset.csv)
 wisesight_raw.csv
 
-# ไม่เอา Environment
+# Ignore virtual environments
 env/
 venv/
