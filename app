@@ -1,37 +1,156 @@
 import streamlit as st
+import pandas as pd
 import re
+import io
+from pythainlp.corpus import thai_words
+from pythainlp.util import Trie
+from gtts import gTTS
 from pythainlp.tokenize import word_tokenize
+from pythainlp.spell import correct
 
-# --- Our main function (same logic) ---
-def normalize_elongated(text):
-    normalized_text = re.sub(r'(.)\1{2,}', r'\1', text)
-    return normalized_text
+# ==========================================
+# ✨ 1. PAGE CONFIG & THEME
+# ==========================================
+st.set_page_config(
+    page_title="Thai NLP | Text Normalizer Pro",
+    page_icon="🇹🇭",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
 
-# --- Web UI ---
-st.title("✨ Thai NLP: Word Elongation Handler")
-st.markdown("Fix elongated typing to improve AI tokenization accuracy!")
+# ==========================================
+# 🎨 2. CUSTOM CSS INJECTION
+# ==========================================
+st.markdown("""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+    .stApp { font-family: 'Inter', sans-serif; background-color: #0E1117; color: #FAFAFA; }
+    .main-title { font-weight: 700; font-size: 3rem; color: #FAFAFA; margin-bottom: 0.5rem; letter-spacing: -1px; }
+    .sub-title { color: #888888; font-size: 1.1rem; margin-bottom: 2rem; }
+    .stTextArea textarea { background-color: #161A21; border: 1px solid #2D343F; border-radius: 12px; color: #FAFAFA; font-size: 1rem; padding: 1rem; }
+    .stTextArea textarea:focus { border-color: #FF4B4B; box-shadow: 0 0 0 1px #FF4B4B; }
+    .result-card { background-color: #161A21; border: 1px solid #2D343F; border-radius: 16px; padding: 1.5rem; margin-top: 1rem; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
+    .result-header { color: #888888; font-size: 0.9rem; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 0.5rem; }
+    .result-text { color: #FAFAFA; font-size: 1.5rem; font-weight: 600; line-height: 1.4; }
+    .stCodeBlock { background-color: #1A1F27 !important; border-radius: 12px !important; border: 1px solid #2D343F !important; }
+    .stButton>button { background-color: #FF4B4B; color: white; border-radius: 12px; padding: 0.75rem 1.5rem; font-weight: 600; border: none; width: 100%; transition: all 0.2s ease; }
+    .stButton>button:hover { background-color: #E64444; box-shadow: 0 4px 12px rgba(255, 75, 75, 0.3); }
+    .footer { text-align: center; color: #444444; font-size: 0.8rem; margin-top: 4rem; padding: 1rem; }
+</style>
+""", unsafe_allow_html=True)
 
-# User input field
-user_input = st.text_input("💬 Enter text to test here:")
+# ==========================================
+# 📚 3. ระบบโหลดฐานข้อมูลคำสแลง และเตรียมตัวตัดคำ
+# ==========================================
+@st.cache_data
+def load_slang_dict():
+    try:
+        df = pd.read_csv('slang_dict.csv', encoding='utf-8')
+        return dict(zip(df['slang'], df['formal']))
+    except FileNotFoundError:
+        st.error("⚠️ หาไฟล์ slang_dict.csv ไม่เจอค่ะ!")
+        return {}
 
-# Processing button
-if st.button("🚀 Run Now!"):
-    if user_input:
-        st.divider() # Divider
+slang_dict = load_slang_dict()
+
+# 🌟 อัปเกรดความฉลาด: โหลดพจนานุกรมคำไทยแท้มาเก็บไว้
+standard_words = set(thai_words())
+
+# 🌟 สร้างพจนานุกรมฉบับ Custom (รวมคำไทยแท้ + คำสแลงของเรา) ให้ตัวตัดคำใช้
+custom_words = standard_words.copy()
+if slang_dict:
+    custom_words.update(slang_dict.keys()) # ยัดคำสแลงเข้าไป
+custom_tokenizer_trie = Trie(custom_words)
+
+# ==========================================
+# 🧠 4. CORE PROCESSING FUNCTION (สมอง AI อัปเกรดใหม่!)
+# ==========================================
+@st.cache_data
+def auto_normalize_text(text):
+    reduced_text = re.sub(r'(.)\1{2,}', r'\1', text)
+    
+    # 🌟 ใช้ตัวตัดคำแบบ Custom เพื่อไม่ให้มันหั่นคำสแลงของเราขาด
+    tokens = word_tokenize(reduced_text, engine='newmm', custom_dict=custom_tokenizer_trie)
+    
+    smart_tokens = []
+    for word in tokens:
+        if not word.strip() or not re.match(r'^[ก-๙]+$', word):
+            smart_tokens.append(word)
+            
+        elif word in slang_dict:
+            smart_tokens.append(slang_dict[word])
+            
+        # 🛡️ ระบบป้องกันคำเพี้ยน: ถ้าคำนี้สะกดถูกอยู่แล้วในพจนานุกรม ให้ปล่อยผ่านเลย!
+        elif word in standard_words:
+            smart_tokens.append(word)
+            
+        elif len(word) > 1:
+            smart_tokens.append(correct(word))
+            
+        else:
+            smart_tokens.append(word)
+            
+    return "".join(smart_tokens), tokens, smart_tokens
+
+# 🔊 ฟังก์ชันสร้างเสียงอ่าน
+def generate_audio(text):
+    tts = gTTS(text=text, lang='th', slow=False)
+    fp = io.BytesIO()
+    tts.write_to_fp(fp)
+    return fp.getvalue()
+
+# ==========================================
+# 🏠 5. MAIN APPLICATION UI
+# ==========================================
+st.markdown('<h1 class="main-title">Thai NLP Text Normalizer Pro</h1>', unsafe_allow_html=True)
+st.markdown('<p class="sub-title">An intelligent system to transform informal Thai social media text and slang into proper, formal sentences.</p>', unsafe_allow_html=True)
+st.divider()
+
+st.markdown("### 📝 Input Text")
+user_input = st.text_area(
+    "Enter noisy Thai text below:", 
+    height=150, 
+    placeholder="e.g., อ้วนน หิวข้าวจางงงเบยยย...",
+    label_visibility="collapsed"
+)
+
+col_btn, _ = st.columns([1, 2])
+with col_btn:
+    process_btn = st.button("Normalize & Correct", type="primary")
+
+if process_btn:
+    if user_input.strip():
+        with st.spinner('AI Engine is processing...'):
+            cleaned_text, raw_tokens, smart_tokens = auto_normalize_text(user_input)
+            audio_bytes = generate_audio(cleaned_text) # สร้างเสียงจากข้อความที่แก้แล้ว
         
-        # 1. Show tokens before normalization
-        st.subheader("🔴 Before Normalization:")
-        before_tokens = word_tokenize(user_input, engine='newmm')
-        st.write(before_tokens)
-
-        # 2. Clean the text
-        cleaned_text = normalize_elongated(user_input)
-        st.subheader("✨ Cleaned Text:")
-        st.info(cleaned_text) # Display in an info box
-
-        # 3. Show tokens after normalization
-        st.subheader("🟢 After Normalization:")
-        after_tokens = word_tokenize(cleaned_text, engine='newmm')
-        st.success(after_tokens) # Display in a success box
+        st.divider()
+        st.markdown(f"""
+        <div class="result-card">
+            <div class="result-header">Normalized Output</div>
+            <div class="result-text">{cleaned_text}</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # 🔊 แถบเล่นเสียง (Audio Player)
+        st.write("##")
+        st.markdown("### 🔊 Listen to the Result")
+        st.audio(audio_bytes, format="audio/mp3")
+        
+        st.write("##")
+        st.markdown("### 🔍 Under the Hood: Tokenization Analysis")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("#### 🔴 Raw Tokens (Before)")
+            st.code(raw_tokens, language="python")
+        with col2:
+            st.markdown("#### 🟢 Normalized Tokens (After)")
+            st.code(smart_tokens, language="python")
     else:
-        st.warning("Please enter some text first!")
+        st.warning("⚠️ Please enter some text before processing.")
+
+st.markdown("""
+<div class="footer">
+    Developed by Baitong | AI Undergraduate @ Faculty of Science and Technology, Huachiew Chalermprakiet University (HCU)
+</div>
+""", unsafe_allow_html=True)
