@@ -1,49 +1,24 @@
-# ⚙️ Thai Text Normalizer System
+# Thai Text Normalizer System (ระบบประมวลผลและปรับแต่งข้อความภาษาไทย)
 
-An automatic Thai text normalization system for Natural Language Processing (NLP). It is designed to handle informal social media text such as repeated characters (word elongation), slang, and misspellings.
-## 📌 Key Features
+An automatic Thai text normalization system for Natural Language Processing (NLP). It is designed to handle informal social media text, slang, word elongation, and misspellings, converting them into proper formal sentences with an integrated audio pronunciation feature.
 
-1. **Rule-based & Dictionary Normalization:** Uses regular expressions to handle word elongation.
-   * Performs dictionary-based spelling correction using `PyThaiNLP` and national Thai lexicons where available.
-2. **Deep Learning Translation (Seq2Seq Model):** Sequence-to-sequence (Encoder-Decoder) model implemented with `PyTorch`.
-   * Trained to translate informal/slang fragments into well-formed formal sentences.
-3. **Interactive User Interface:** Built with `Streamlit`.
-   * Professional/dark-themed UI for clear comparison of raw input vs normalized tokens.
+## Key Features (คุณสมบัติหลัก)
 
-## 🛠️ System Structure
+1. **Cloud-based Slang Dictionary:** * Fetches a custom Thai slang dataset directly from Hugging Face (`thassanawalai/thai-social-slang-dict`) using the `datasets` library.
+2. **Rule-based and Dictionary Normalization:** * Reduces character elongation using regular expressions.
+   * Performs custom tokenization and dictionary-based spelling correction using `PyThaiNLP` and standard Thai lexicons, ensuring valid words remain unaltered.
+3. **Text-to-Speech Integration:** * Automatically generates audio pronunciation of the normalized text using `gTTS` (Google Text-to-Speech).
+4. **Interactive User Interface:** * Built with `Streamlit`.
+   * Professional dark-themed UI featuring a clear comparison of raw input versus normalized tokens and a built-in audio player.
 
-* `app.py`: Main Streamlit UI and rule-based normalizer
-* `train_seq2seq.py`: Seq2Seq model architecture and training loop (PyTorch)
-* `generate_dataset.py`: Script to generate a synthetic parallel corpus (slang -> formal)
-* `slang_dataset.csv`: Training dataset (parallel pairs)
-## 🚀 Installation & Usage
+## System Architecture (โครงสร้างของระบบ)
 
-**1. Install required libraries:**
+* `app.py`: The main Streamlit application containing the user interface, normalization logic, and text-to-speech generation.
+* `requirements.txt`: List of required Python dependencies for deployment.
+
+## Installation and Usage (การติดตั้งและการใช้งาน)
+
+**1. Install required libraries (ติดตั้งไลบรารีที่จำเป็น):**
+
 ```bash
-pip install torch pandas pythainlp streamlit tqdm datasets
-```
-# ⚙️ Thai Text Normalizer System
-
-ระบบประมวลผลและปรับแต่งข้อความภาษาไทยอัตโนมัติ (Thai Text Normalization) สำหรับงานด้านการประมวลผลภาษาธรรมชาติ (Natural Language Processing - NLP) พัฒนาขึ้นเพื่อจัดการกับข้อความบนโซเชียลมีเดียที่มีความไม่เป็นทางการ เช่น การพิมพ์ตัวอักษรซ้ำ (Word Elongation) และการใช้คำสแลงหรือคำวิบัติ (Misspelling/Slang)
-
-## 📌 คุณสมบัติหลัก (Key Features)
-
-1. **Rule-based & Dictionary Normalization:** * จัดการปัญหากาลากเสียง (Word Elongation) ด้วย Regular Expression
-   * ตรวจสอบและแก้ไขคำสะกดผิดด้วย Dictionary-based Spelling Correction จากฐานข้อมูลคลังข้อมูลภาษาไทยแห่งชาติ (TNC) ผ่านไลบรารี `PyThaiNLP`
-2. **Deep Learning Translation (Seq2Seq Model):** * โมเดลสถาปัตยกรรม Sequence-to-Sequence (Encoder-Decoder) พัฒนาด้วย `PyTorch` 
-   * ฝึกสอน (Training) เพื่อทำหน้าที่แปลก้อนข้อความภาษาวัยรุ่นหรือคำสแลง ให้เป็นประโยคภาษาทางการที่มีความหมายสมบูรณ์
-3. **Interactive User Interface:** * หน้าจอแสดงผลแบบโต้ตอบ พัฒนาด้วย `Streamlit` 
-   * ออกแบบ UI สไตล์ Professional/Dark Mode เพื่อเปรียบเทียบข้อความก่อนและหลังการประมวลผล (Raw Input vs Normalized Tokens) ได้อย่างชัดเจน
-
-## 🛠️ โครงสร้างของระบบ (System Architecture)
-
-* `app.py`: ไฟล์หลักสำหรับรันหน้าเว็บแอปพลิเคชัน (Streamlit UI) และระบบ Rule-based Normalizer
-* `train_seq2seq.py`: สถาปัตยกรรมโมเดล Seq2Seq และกระบวนการ Training Loop ด้วย PyTorch
-* `generate_dataset.py`: สคริปต์สำหรับสร้าง Synthetic Parallel Corpus (Slang to Formal) จากชุดข้อมูลสาธารณะ
-* `slang_dataset.csv`: ชุดข้อมูลสำหรับฝึกสอนโมเดล (Training Dataset)
-
-## 🚀 การติดตั้งและการใช้งาน (Installation & Usage)
-
-**1. ติดตั้งไลบรารีที่จำเป็น:**
-```bash
-pip install torch pandas pythainlp streamlit tqdm datasets
+pip install streamlit pandas pythainlp datasets gTTS
