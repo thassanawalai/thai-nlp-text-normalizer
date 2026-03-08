@@ -1,43 +1,84 @@
 import pandas as pd
-import re
-from pythainlp.tokenize import word_tokenize
-from pythainlp.spell import correct
-from tqdm import tqdm # progress bar utility
+import random
+import os
+from datasets import load_dataset
 
-# Enable tqdm integration for pandas
-tqdm.pandas()
+# ==========================================
+# 1. LOAD DICTIONARY
+# ==========================================
+def load_slang_dictionary():
+    # Load formal and slang words from your Hugging Face dataset
+    dataset = load_dataset("thassanawalai/thai-social-slang-dict", split="train")
+    return dict(zip(dataset['formal'], dataset['slang']))
 
-print("🚀 Preparing to build a parallel dataset (Parallel Corpus)...")
+# ==========================================
+# 2. LOAD BASE SENTENCES FROM FILE
+# ==========================================
+def load_base_sentences(filepath):
+    if not os.path.exists(filepath):
+        print(f"Error: File '{filepath}' not found.")
+        print("Please create the file and add formal Thai sentences line by line.")
+        return []
+        
+    with open(filepath, 'r', encoding='utf-8') as file:
+        # Read lines and remove whitespace/newlines
+        sentences = [line.strip() for line in file.readlines() if line.strip()]
+    return sentences
 
-df = pd.read_csv('wisesight_raw.csv')
-
-# Take a small sample (100 rows) for a quick test run
-df_sample = df.head(100).copy()
-
-def auto_clean_text(text):
-    text = str(text)
-    reduced = re.sub(r'(.)\1{2,}', r'\1', text)
-    tokens = word_tokenize(reduced, engine='newmm')
+# ==========================================
+# 3. DATA AUGMENTATION PROCESS
+# ==========================================
+def generate_synthetic_data(base_sentences, num_samples=1000):
+    slang_dict = load_slang_dictionary()
+    formal_words = list(slang_dict.keys())
     
-    smart_tokens = []
-    for word in tokens:
-        # Safety guard: if a token is longer than 15 chars or contains
-        # non-Thai characters, skip spell-correction to avoid noise
-        if len(word) > 15 or not re.match(r'^[ก-๙]+$', word):
-            smart_tokens.append(word)
-        else:
-            smart_tokens.append(correct(word))
+    synthetic_pairs = []
+    
+    while len(synthetic_pairs) < num_samples:
+        sentence = random.choice(base_sentences)
+        noisy_sentence = sentence
+        
+        # Inject slang words randomly
+        for formal_word in formal_words:
+            if formal_word in noisy_sentence and random.random() > 0.3:
+                noisy_sentence = noisy_sentence.replace(formal_word, slang_dict[formal_word])
+        
+        # Inject character elongation (e.g., repeating vowels or consonants)
+        if random.random() > 0.5 and len(noisy_sentence) > 5:
+            idx = random.randint(0, len(noisy_sentence) - 1)
+            char = noisy_sentence[idx]
+            # Ensure we only repeat Thai characters
+            if '\u0E00' <= char <= '\u0E7F': 
+                noisy_sentence = noisy_sentence[:idx] + char * random.randint(2, 4) + noisy_sentence[idx+1:]
+        
+        # Only keep pairs that were successfully modified
+        if noisy_sentence != sentence:
+            synthetic_pairs.append({
+                "noisy_text": noisy_sentence,
+                "formal_text": sentence
+            })
+            
+    return pd.DataFrame(synthetic_pairs)
 
-    return "".join(smart_tokens)
-
-print("🤖 Processing text to produce formalized versions... (see progress bar below)")
-
-# Use progress_apply instead of apply to display a nice progress bar
-df_sample['clean_text'] = df_sample['texts'].progress_apply(auto_clean_text)
-
-df_sample = df_sample.rename(columns={'texts': 'noisy_text'})
-df_sample[['noisy_text', 'clean_text']].to_csv('slang_dataset.csv', index=False, encoding='utf-8-sig')
-
-print("-" * 50)
-print("✅ Created slang_dataset.csv successfully!")
-print(df_sample[['noisy_text', 'clean_text']].head(5))
+if __name__ == "__main__":
+    input_filename = "formal_sentences.txt"
+    output_filename = "slang_dataset.csv"
+    target_samples = 5000  # Adjust this number based on your needs
+    
+    print(f"Loading base sentences from '{input_filename}'...")
+    base_sentences = load_base_sentences(input_filename)
+    
+    if not base_sentences:
+        print("Process terminated due to missing input file.")
+    else:
+        print(f"Loaded {len(base_sentences)} base sentences.")
+        print(f"Generating synthetic dataset with {target_samples} samples...")
+        
+        df = generate_synthetic_data(base_sentences, num_samples=target_samples)
+        
+        # Save the generated dataset to a CSV file
+        df.to_csv(output_filename, index=False, encoding="utf-8")
+        
+        print(f"Dataset generated successfully.")
+        print(f"Total samples: {len(df)}")
+        print(f"Saved as '{output_filename}'.")

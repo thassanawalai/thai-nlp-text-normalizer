@@ -1,19 +1,34 @@
-import pandas as pd
 import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader
+from datasets import load_dataset
 from pythainlp.tokenize import word_tokenize
+import random
+import numpy as np
+import os
+from tqdm import tqdm
 
-# --- 1. Vocab class ---
-class Vocab:
+# ==========================================
+# 1. CONFIGURATION AND DEVICE SETUP
+# ==========================================
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"System is configured to use device: {device}")
+
+# ==========================================
+# 2. VOCABULARY MANAGEMENT
+# ==========================================
+class Vocabulary:
     def __init__(self, name):
         self.name = name
-        # Special tokens required by the model
         self.word2index = {"<PAD>": 0, "<SOS>": 1, "<EOS>": 2, "<UNK>": 3}
         self.index2word = {0: "<PAD>", 1: "<SOS>", 2: "<EOS>", 3: "<UNK>"}
-        self.n_words = 4  # initial count (includes special tokens)
+        self.n_words = 4
 
     def add_sentence(self, sentence):
-        # Tokenize the sentence and add words to the vocab
-        for word in word_tokenize(str(sentence), engine='newmm'):
+        # Tokenize Thai sentences using PyThaiNLP
+        tokens = word_tokenize(sentence, engine='newmm')
+        for word in tokens:
             self.add_word(word)
 
     def add_word(self, word):
@@ -22,222 +37,179 @@ class Vocab:
             self.index2word[self.n_words] = word
             self.n_words += 1
 
-# --- 2. Load dataset ---
-print("Loading dataset...")
-df = pd.read_csv('slang_dataset.csv')
+# ==========================================
+# 3. PYTORCH DATASET AND DATALOADER
+# ==========================================
+class ThaiParallelDataset(Dataset):
+    def __init__(self, source_sentences, target_sentences, source_vocab, target_vocab):
+        self.source_sentences = source_sentences
+        self.target_sentences = target_sentences
+        self.source_vocab = source_vocab
+        self.target_vocab = target_vocab
 
-# Create vocabularies for both sides (slang / formal)
-slang_vocab = Vocab("Slang")
-formal_vocab = Vocab("Formal")
+    def __len__(self):
+        return len(self.source_sentences)
 
-# Populate vocabularies by iterating through the dataset
-for index, row in df.iterrows():
-    slang_vocab.add_sentence(row['noisy_text'])
-    formal_vocab.add_sentence(row['clean_text'])
+    def __getitem__(self, idx):
+        src_tokens = word_tokenize(self.source_sentences[idx], engine='newmm')
+        trg_tokens = word_tokenize(self.target_sentences[idx], engine='newmm')
+        
+        # Convert tokens to numerical indices, use <UNK> (3) if word is not in vocab
+        src_seq = [self.source_vocab.word2index.get(w, 3) for w in src_tokens]
+        trg_seq = [self.target_vocab.word2index.get(w, 3) for w in trg_tokens]
+        
+        # Append <EOS> token (2) at the end of sequences
+        src_seq.append(2)
+        trg_seq.append(2)
+        
+        return torch.tensor(src_seq), torch.tensor(trg_seq)
 
-print(f"✅ Slang vocab (input) size: {slang_vocab.n_words}")
-print(f"✅ Formal vocab (output) size: {formal_vocab.n_words}")
-print("-" * 30)
-print(f"Example slang tokens: {list(slang_vocab.word2index.keys())[4:10]}")
-
-import torch.nn as nn
-import torch.nn.functional as F
-
-# Hidden size of the model (larger -> more capacity, slower training)
-hidden_size = 256
+def collate_fn(batch):
+    # Pad sequences to the maximum length in the batch
+    src_batch, trg_batch = zip(*batch)
+    src_batch = nn.utils.rnn.pad_sequence(src_batch, padding_value=0, batch_first=True)
+    trg_batch = nn.utils.rnn.pad_sequence(trg_batch, padding_value=0, batch_first=True)
+    return src_batch, trg_batch
 
 # ==========================================
-# 🧠 3. Encoder
+# 4. SEQ2SEQ MODEL ARCHITECTURE
 # ==========================================
-class EncoderRNN(nn.Module):
-    def __init__(self, input_size, hidden_size):
-        super(EncoderRNN, self).__init__()
-        self.hidden_size = hidden_size
-        
-        # Embedding: convert index to dense vector representation
-        self.embedding = nn.Embedding(input_size, hidden_size)
-        
-        # GRU: recurrent unit to process sequence information
-        self.gru = nn.GRU(hidden_size, hidden_size, batch_first=True)
+class Encoder(nn.Module):
+    def __init__(self, input_size, hidden_size, emb_size, dropout_p=0.1):
+        super(Encoder, self).__init__()
+        self.embedding = nn.Embedding(input_size, emb_size)
+        self.gru = nn.GRU(emb_size, hidden_size, batch_first=True)
+        self.dropout = nn.Dropout(dropout_p)
 
-    def forward(self, input_tensor, hidden_tensor):
-        # 1. แปลงคำเป็นเวกเตอร์
-        embedded = self.embedding(input_tensor).view(1, 1, -1)
-        # 2. ส่งให้ GRU อ่านและจำ
-        output, hidden = self.gru(embedded, hidden_tensor)
-        return output, hidden
+    def forward(self, x):
+        embedded = self.dropout(self.embedding(x))
+        output, hidden = self.gru(embedded)
+        return hidden
 
-    def initHidden(self):
-        # Initialize hidden state before processing a new sequence
-        return torch.zeros(1, 1, self.hidden_size)
-
-# ==========================================
-# ✍️ 4. Decoder
-# ==========================================
-class DecoderRNN(nn.Module):
-    def __init__(self, hidden_size, output_size):
-        super(DecoderRNN, self).__init__()
-        self.hidden_size = hidden_size
-        
-        self.embedding = nn.Embedding(output_size, hidden_size)
-        self.gru = nn.GRU(hidden_size, hidden_size, batch_first=True)
-        
-        # Linear: final layer that maps to vocabulary logits
+class Decoder(nn.Module):
+    def __init__(self, output_size, hidden_size, emb_size, dropout_p=0.1):
+        super(Decoder, self).__init__()
+        self.embedding = nn.Embedding(output_size, emb_size)
+        self.gru = nn.GRU(emb_size, hidden_size, batch_first=True)
         self.out = nn.Linear(hidden_size, output_size)
-        self.softmax = nn.LogSoftmax(dim=1)
+        self.dropout = nn.Dropout(dropout_p)
 
-    def forward(self, input_tensor, hidden_tensor):
-        embedded = self.embedding(input_tensor).view(1, 1, -1)
-        embedded = F.relu(embedded) # apply ReLU activation
+    def forward(self, x, hidden):
+        x = x.unsqueeze(1)
+        embedded = self.dropout(self.embedding(x))
+        output, hidden = self.gru(embedded, hidden)
+        prediction = self.out(output.squeeze(1))
+        return prediction, hidden
+
+class Seq2Seq(nn.Module):
+    def __init__(self, encoder, decoder, target_vocab_size):
+        super(Seq2Seq, self).__init__()
+        self.encoder = encoder
+        self.decoder = decoder
+        self.target_vocab_size = target_vocab_size
+
+    def forward(self, source, target, teacher_forcing_ratio=0.5):
+        batch_size = source.shape[0]
+        target_len = target.shape[1]
         
-        output, hidden = self.gru(embedded, hidden_tensor)
+        outputs = torch.zeros(batch_size, target_len, self.target_vocab_size).to(device)
+        hidden = self.encoder(source)
         
-        # Compute token probabilities for the next word
-        output = self.softmax(self.out(output[0]))
-        return output, hidden
-
-# --- ทดลองสร้างตัวโมเดลขึ้นมาจริงๆ ---
-print("Building model architecture...")
-encoder = EncoderRNN(input_size=slang_vocab.n_words, hidden_size=hidden_size)
-decoder = DecoderRNN(hidden_size=hidden_size, output_size=formal_vocab.n_words)
-
-print("✅ Encoder and Decoder created successfully!")
-print(encoder)
-
-import torch.optim as optim
-
-# ==========================================
-# 🛠️ 5. Utilities: convert sentences to tensors
-# ==========================================
-def indexesFromSentence(vocab, sentence):
-    # Tokenize and convert words to indices using our vocab
-    return [vocab.word2index[word] for word in word_tokenize(str(sentence), engine='newmm') if word in vocab.word2index]
-
-def tensorFromSentence(vocab, sentence):
-    indexes = indexesFromSentence(vocab, sentence)
-    indexes.append(vocab.word2index["<EOS>"]) # append <EOS> to mark end of sentence
-    return torch.tensor(indexes, dtype=torch.long).view(-1, 1)
-
-# ==========================================
-# 🏋️ 6. Single training step (forward & backward)
-# ==========================================
-def train(input_tensor, target_tensor, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion):
-    encoder_hidden = encoder.initHidden()
-
-    # Zero gradients before backprop
-    encoder_optimizer.zero_grad()
-    decoder_optimizer.zero_grad()
-
-    input_length = input_tensor.size(0)
-    target_length = target_tensor.size(0)
-    loss = 0
-
-    # 1. Encoder: read the input sequence token-by-token
-    for ei in range(input_length):
-        encoder_output, encoder_hidden = encoder(input_tensor[ei], encoder_hidden)
-
-    # 2. Decoder: generate the target sequence
-    decoder_input = torch.tensor([[formal_vocab.word2index["<SOS>"]]]) # start with <SOS>
-    decoder_hidden = encoder_hidden # transfer encoder state to decoder
-
-    for di in range(target_length):
-        decoder_output, decoder_hidden = decoder(decoder_input, decoder_hidden)
+        # First token is always <SOS> (1)
+        x = target[:, 0]
         
-        # Select the token with highest probability
-        topv, topi = decoder_output.topk(1)
-        decoder_input = topi.squeeze().detach()
-
-        # Compute loss for this step
-        loss += criterion(decoder_output, target_tensor[di])
-        if decoder_input.item() == formal_vocab.word2index["<EOS>"]:
-            break
-
-    # 3. Backpropagation: update model parameters
-    loss.backward()
-    encoder_optimizer.step()
-    decoder_optimizer.step()
-
-    return loss.item() / target_length
+        for t in range(1, target_len):
+            output, hidden = self.decoder(x, hidden)
+            outputs[:, t, :] = output
+            
+            best_guess = output.argmax(1)
+            x = target[:, t] if random.random() < teacher_forcing_ratio else best_guess
+            
+        return outputs
 
 # ==========================================
-# 🚀 7. Training loop
+# 5. TRAINING ROUTINE
 # ==========================================
-print("Starting training loop...")
-learning_rate = 0.01 # learning rate
-encoder_optimizer = optim.SGD(encoder.parameters(), lr=learning_rate)
-decoder_optimizer = optim.SGD(decoder.parameters(), lr=learning_rate)
-criterion = nn.NLLLoss() # เครื่องมือวัดความผิดพลาด
+def train():
+    # Load dataset from Hugging Face
+    print("Downloading dataset from Hugging Face...")
+    try:
+        # User's specific parallel corpus repository
+        dataset = load_dataset("thassanawalai/thai-slang-parallel-corpus", split="train")
+        source_texts = dataset['noisy_text']
+        target_texts = dataset['formal_text']
+        print(f"Successfully loaded {len(source_texts)} sentence pairs.")
+    except Exception as e:
+        print(f"Failed to load dataset: {e}")
+        return
 
-epochs = 100 # number of training epochs
-
-# แปลง Dataset ทั้งหมดให้เป็นตัวเลขรอไว้เลย
-training_pairs = [(tensorFromSentence(slang_vocab, row['noisy_text']),
-                   tensorFromSentence(formal_vocab, row['clean_text']))
-                  for _, row in df.iterrows()]
-
-# เริ่มเทรน!
-for epoch in range(1, epochs + 1):
-    total_loss = 0
-    for input_tensor, target_tensor in training_pairs:
-        loss = train(input_tensor, target_tensor, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion)
-        total_loss += loss
+    # Initialize and build vocabularies
+    print("Building vocabularies...")
+    source_vocab = Vocabulary("noisy_thai")
+    target_vocab = Vocabulary("formal_thai")
     
-    # Report progress every 10 epochs
-    if epoch % 10 == 0:
-        avg_loss = total_loss / len(training_pairs)
-        print(f"Epoch {epoch}/{epochs} | Loss: {avg_loss:.4f}")
+    for src, trg in zip(source_texts, target_texts):
+        source_vocab.add_sentence(src)
+        target_vocab.add_sentence(trg)
+        
+    print(f"Source Vocabulary Size: {source_vocab.n_words}")
+    print(f"Target Vocabulary Size: {target_vocab.n_words}")
 
-print("✅ Training complete!")
+    # Prepare DataLoader
+    train_dataset = ThaiParallelDataset(source_texts, target_texts, source_vocab, target_vocab)
+    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, collate_fn=collate_fn)
 
-# ==========================================
-# 🔮 8. Evaluation
-# ==========================================
-def evaluate(encoder, decoder, sentence, max_length=20):
-    with torch.no_grad():
-        # 1. Convert input sentence to tensor
-        input_tensor = tensorFromSentence(slang_vocab, sentence)
-        input_length = input_tensor.size()[0]
-        encoder_hidden = encoder.initHidden()
+    # Hyperparameters
+    ENC_EMB_DIM = 128
+    DEC_EMB_DIM = 128
+    HID_DIM = 256
+    N_EPOCHS = 20
+    LEARNING_RATE = 0.001
 
-        # 2. Encoder processes the input sequence
-        for ei in range(input_length):
-            encoder_output, encoder_hidden = encoder(input_tensor[ei], encoder_hidden)
+    # Instantiate models
+    enc = Encoder(source_vocab.n_words, HID_DIM, ENC_EMB_DIM).to(device)
+    dec = Decoder(target_vocab.n_words, HID_DIM, DEC_EMB_DIM).to(device)
+    model = Seq2Seq(enc, dec, target_vocab.n_words).to(device)
 
-        # 3. Decoder generates the output sequence
-        decoder_input = torch.tensor([[formal_vocab.word2index["<SOS>"]]])
-        decoder_hidden = encoder_hidden
-        decoded_words = []
+    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
+    # Ignore <PAD> index (0) in loss calculation
+    criterion = nn.CrossEntropyLoss(ignore_index=0) 
 
-        for di in range(max_length):
-            decoder_output, decoder_hidden = decoder(decoder_input, decoder_hidden)
-            topv, topi = decoder_output.data.topk(1)
+    print("Starting Model Training...")
+    for epoch in range(N_EPOCHS):
+        model.train()
+        epoch_loss = 0
+        
+        progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{N_EPOCHS}", leave=False)
+        for src, trg in progress_bar:
+            src, trg = src.to(device), trg.to(device)
+            optimizer.zero_grad()
+            
+            output = model(src, trg)
+            
+            # Reshape for loss calculation
+            output_dim = output.shape[-1]
+            output = output[:, 1:].reshape(-1, output_dim)
+            trg = trg[:, 1:].reshape(-1)
+            
+            loss = criterion(output, trg)
+            loss.backward()
+            
+            # Gradient clipping to prevent exploding gradients
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            optimizer.step()
+            
+            epoch_loss += loss.item()
+            progress_bar.set_postfix(loss=loss.item())
+            
+        avg_loss = epoch_loss / len(train_loader)
+        print(f"Epoch: {epoch+1:02} | Average Training Loss: {avg_loss:.4f}")
 
-            if topi.item() == formal_vocab.word2index["<EOS>"]:
-                break
-            else:
-                # Convert index back to word
-                decoded_words.append(formal_vocab.index2word[topi.item()])
+    # Save the trained model weights
+    save_path = "seq2seq_model.pt"
+    torch.save(model.state_dict(), save_path)
+    print(f"Training complete. Model saved to '{save_path}'.")
 
-            decoder_input = topi.squeeze().detach()
-
-        return "".join(decoded_words)
-
-# ==========================================
-# ✨ Quick evaluation examples
-# ==========================================
-print("\n" + "="*40)
-print("✨ Demo: AI Text Normalizer ✨")
-print("="*40)
-
-# Example test sentences (informal / slang)
-test_sentences = [
-    "im sooo hungry rn",
-    "working on this lol",
-    "miss u soooo much"
-]
-
-for sentence in test_sentences:
-    output = evaluate(encoder, decoder, sentence)
-    print(f"🔴 Input (slang): {sentence}")
-    print(f"🟢 AI (formalized): {output}")
-    print("-" * 40)
+if __name__ == "__main__":
+    train()
+    
