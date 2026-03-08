@@ -3,19 +3,21 @@ import pandas as pd
 import re
 from pythainlp.tokenize import word_tokenize
 from pythainlp.spell import correct
+from pythainlp.corpus import thai_words
+from pythainlp.util import Trie
+from datasets import load_dataset
 
 # ==========================================
-# ✨ 1. PAGE CONFIG & THEME (Must be FIRST)
+# 1. PAGE CONFIG & THEME
 # ==========================================
 st.set_page_config(
     page_title="Thai NLP | Text Normalizer Pro",
-    page_icon="🇹🇭",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
 # ==========================================
-# 🎨 2. CUSTOM CSS INJECTION (หน้าเว็บสวยๆ)
+# 2. CUSTOM CSS INJECTION
 # ==========================================
 st.markdown("""
 <style>
@@ -36,33 +38,53 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 📚 3. ระบบโหลดฐานข้อมูลคำสแลง (จากไฟล์ CSV)
+# 3. LOAD SLANG DICTIONARY FROM HUGGING FACE
 # ==========================================
 @st.cache_data
 def load_slang_dict():
     try:
-        df = pd.read_csv('slang_dict.csv', encoding='utf-8')
-        return dict(zip(df['slang'], df['formal']))
-    except FileNotFoundError:
-        st.error("⚠️ หาไฟล์ slang_dict.csv ไม่เจอค่ะ อย่าลืมสร้างและอัปขึ้น GitHub น้า!")
+        # Load dataset directly from Hugging Face repository
+        dataset = load_dataset("thassanawalai/thai-social-slang-dict", split="train")
+        
+        # Map slang and formal columns into a Python Dictionary
+        return dict(zip(dataset['slang'], dataset['formal']))
+        
+    except Exception as e:
+        st.error(f"Failed to fetch data from Hugging Face: {e}")
         return {}
 
 slang_dict = load_slang_dict()
 
+# Prepare custom tokenizer trie incorporating the slang dictionary
+standard_words = set(thai_words())
+custom_words = standard_words.copy()
+if slang_dict:
+    custom_words.update(slang_dict.keys())
+custom_tokenizer_trie = Trie(custom_words)
+
 # ==========================================
-# 🧠 4. CORE PROCESSING FUNCTION (สมอง AI ฉลาดๆ)
+# 4. CORE PROCESSING FUNCTION
 # ==========================================
 @st.cache_data
 def auto_normalize_text(text):
+    # Reduce character elongation
     reduced_text = re.sub(r'(.)\1{2,}', r'\1', text)
-    tokens = word_tokenize(reduced_text, engine='newmm')
+    
+    # Tokenize using the custom trie dictionary
+    tokens = word_tokenize(reduced_text, engine='newmm', custom_dict=custom_tokenizer_trie)
     
     smart_tokens = []
     for word in tokens:
+        # Preserve whitespaces and non-Thai characters
         if not word.strip() or not re.match(r'^[ก-๙]+$', word):
             smart_tokens.append(word)
+        # Apply slang mapping
         elif word in slang_dict:
             smart_tokens.append(slang_dict[word])
+        # Skip spell check for valid standard Thai words
+        elif word in standard_words:
+            smart_tokens.append(word)
+        # Apply spell correction for unknown words longer than 1 character
         elif len(word) > 1:
             smart_tokens.append(correct(word))
         else:
@@ -71,13 +93,13 @@ def auto_normalize_text(text):
     return "".join(smart_tokens), tokens, smart_tokens
 
 # ==========================================
-# 🏠 5. MAIN APPLICATION UI (จัดวางหน้าเว็บ)
+# 5. MAIN APPLICATION UI
 # ==========================================
 st.markdown('<h1 class="main-title">Thai NLP Text Normalizer Pro</h1>', unsafe_allow_html=True)
 st.markdown('<p class="sub-title">An intelligent system to transform informal Thai social media text and slang into proper, formal sentences.</p>', unsafe_allow_html=True)
 st.divider()
 
-st.markdown("### 📝 Input Text")
+st.markdown("### Input Text")
 user_input = st.text_area(
     "Enter noisy Thai text below:", 
     height=150, 
@@ -103,16 +125,16 @@ if process_btn:
         """, unsafe_allow_html=True)
         st.write("##")
         
-        st.markdown("### 🔍 Under the Hood: Tokenization Analysis")
+        st.markdown("### Under the Hood: Tokenization Analysis")
         col1, col2 = st.columns(2)
         with col1:
-            st.markdown("#### 🔴 Raw Tokens (Before)")
+            st.markdown("#### Raw Tokens (Before)")
             st.code(raw_tokens, language="python")
         with col2:
-            st.markdown("#### 🟢 Normalized Tokens (After)")
+            st.markdown("#### Normalized Tokens (After)")
             st.code(smart_tokens, language="python")
     else:
-        st.warning("⚠️ Please enter some text before processing.")
+        st.warning("Please enter some text before processing.")
 
 st.markdown("""
 <div class="footer">
