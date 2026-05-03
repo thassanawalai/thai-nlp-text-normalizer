@@ -1,24 +1,29 @@
-import streamlit as st
-import re
-import io
-from pythainlp.corpus import thai_words
-from pythainlp.util import Trie, normalize as thai_normalize
-from pythainlp.tokenize import word_tokenize
-from pythainlp.spell import correct
-from gtts import gTTS
-from google import genai
+"""
+Thai Text Normalizer — Unified LLM-powered pipeline.
 
-from normalizer import ThaiTextNormalizer
+Single processing engine:
+  1. ThaiTextNormalizer (rule-based pre-processing)
+  2. Gemini LLM (context-aware normalization, requires API key)
+
+Set GEMINI_API_KEY environment variable or enter it in the sidebar.
+"""
+
+import io
+import streamlit as st
+from pythainlp.tokenize import word_tokenize
+from gtts import gTTS
+
+from normalizer.smart_normalizer import SmartNormalizer
 from config import GEMINI_API_KEY
 
 # ==========================================
 # 1. PAGE CONFIG
 # ==========================================
 st.set_page_config(
-    page_title="Thai NLP | Text Normalizer Pro",
+    page_title="Thai NLP | Smart Text Normalizer",
     page_icon="",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="collapsed",
 )
 
 # ==========================================
@@ -35,16 +40,15 @@ st.markdown("""
 }
 .main-title {
     font-weight: 700;
-    font-size: 3.5rem;
+    font-size: 3rem;
     color: #1A202C;
-    margin-bottom: 0.5rem;
-    letter-spacing: -1.5px;
+    margin-bottom: 0.3rem;
+    letter-spacing: -1px;
 }
 .sub-title {
     color: #4A5568;
-    font-size: 1.25rem;
-    margin-top: 0.5rem;
-    margin-bottom: 2.5rem;
+    font-size: 1.15rem;
+    margin-bottom: 2rem;
     font-weight: 300;
 }
 .stTextArea textarea {
@@ -52,319 +56,284 @@ st.markdown("""
     border: 1px solid #CBD5E0;
     border-radius: 12px;
     color: #1A202C;
-    font-size: 1.15rem;
-    padding: 1.2rem;
+    font-size: 1.1rem;
+    padding: 1rem;
     transition: all 0.3s ease;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
 }
 .stTextArea textarea:focus {
     border-color: #4299E1;
-    box-shadow: 0 0 0 2px rgba(66, 153, 225, 0.2);
+    box-shadow: 0 0 0 2px rgba(66,153,225,0.2);
 }
 .result-card {
-    background-color: #FFFFFF;
+    background: #FFFFFF;
     border: 1px solid #E2E8F0;
     border-left: 6px solid #4299E1;
     border-radius: 16px;
-    padding: 2.5rem;
-    margin-top: 1.5rem;
-    box-shadow: 0 10px 20px rgba(0, 0, 0, 0.07);
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    padding: 2rem;
+    margin-top: 1.2rem;
+    box-shadow: 0 8px 16px rgba(0,0,0,0.06);
+    transition: transform 0.2s ease;
 }
-.result-card:hover {
-    transform: translateY(-3px);
-    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.1);
-}
+.result-card:hover { transform: translateY(-2px); }
 .result-header {
     color: #718096;
-    font-size: 1rem;
+    font-size: 0.85rem;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 1.5px;
-    margin-bottom: 1rem;
+    margin-bottom: 0.8rem;
 }
 .result-text {
     color: #1A202C;
-    font-size: 1.8rem;
+    font-size: 1.6rem;
     font-weight: 500;
     line-height: 1.6;
 }
-.stCodeBlock {
-    background-color: #F7FAFC !important;
-    border-radius: 12px !important;
-    border: 1px solid #E2E8F0 !important;
+.step-card {
+    background: #F7FAFC;
+    border: 1px solid #E2E8F0;
+    border-radius: 12px;
+    padding: 1rem 1.5rem;
+    margin: 0.5rem 0;
+}
+.step-label {
+    color: #718096;
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+.step-value {
+    color: #2D3748;
+    font-size: 1.1rem;
+    margin-top: 0.3rem;
 }
 div[data-testid="stButton"] > button[kind="primary"] {
-    background: linear-gradient(90deg, #3182CE 0%, #2B6CB0 100%);
+    background: linear-gradient(90deg, #3182CE, #2B6CB0);
     color: white;
     border-radius: 12px;
     padding: 0.75rem 1.5rem;
     font-weight: 600;
     border: none;
-    box-shadow: 0 4px 12px rgba(49, 130, 206, 0.3);
+    box-shadow: 0 4px 12px rgba(49,130,206,0.3);
     transition: all 0.3s ease;
     width: 100%;
 }
 div[data-testid="stButton"] > button[kind="primary"]:hover {
     transform: translateY(-2px);
-    box-shadow: 0 6px 16px rgba(49, 130, 206, 0.4);
+    box-shadow: 0 6px 16px rgba(49,130,206,0.4);
 }
 .footer {
     text-align: center;
     color: #A0AEC0;
-    font-size: 0.9rem;
-    margin-top: 5rem;
+    font-size: 0.85rem;
+    margin-top: 4rem;
     padding: 1.5rem;
     border-top: 1px solid #E2E8F0;
+}
+.badge-llm {
+    display: inline-block;
+    background: #EBF8FF;
+    color: #2B6CB0;
+    border: 1px solid #BEE3F8;
+    border-radius: 999px;
+    padding: 2px 10px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    margin-left: 8px;
+}
+.badge-rules {
+    display: inline-block;
+    background: #F0FFF4;
+    color: #276749;
+    border: 1px solid #C6F6D5;
+    border-radius: 999px;
+    padding: 2px 10px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    margin-left: 8px;
 }
 </style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 3. INITIALISE NORMALIZER AND TOKENIZER
+# 3. SIDEBAR — API KEY
+# ==========================================
+if "history" not in st.session_state:
+    st.session_state["history"] = []
+
+st.sidebar.markdown("### Settings")
+
+# API key: env var takes priority; user can override in sidebar
+api_key_input = st.sidebar.text_input(
+    "Gemini API Key",
+    value="",
+    type="password",
+    placeholder="Leave blank to use env var",
+    help="Set GEMINI_API_KEY as environment variable, or paste your key here.",
+)
+active_key = api_key_input.strip() or GEMINI_API_KEY
+
+if st.sidebar.button("Reset Cache", use_container_width=True):
+    st.cache_resource.clear()
+    st.rerun()
+
+st.sidebar.divider()
+st.sidebar.caption(
+    "**Pipeline:**  \n"
+    "1. Rule-based pre-processing  \n"
+    "2. Gemini LLM normalization"
+)
+
+# ==========================================
+# 4. INIT NORMALIZER (cached singleton)
 # ==========================================
 @st.cache_resource
-def get_normalizer() -> ThaiTextNormalizer:
-    """Load ThaiTextNormalizer once and cache for the session lifetime."""
-    return ThaiTextNormalizer()
+def get_normalizer(key: str) -> SmartNormalizer:
+    return SmartNormalizer(api_key=key or None)
 
-@st.cache_resource
-def get_custom_tokenizer():
-    """Build a custom tokenizer trie that includes slang words."""
-    normalizer = get_normalizer()
-    custom_words = set(thai_words())
-    custom_words.update(normalizer._word_dict.keys())
-    return Trie(custom_words)
-
-normalizer = get_normalizer()
-custom_trie = get_custom_tokenizer()
+normalizer = get_normalizer(active_key)
 
 # ==========================================
-# 4. CORE PROCESSING FUNCTION
+# 5. HELPERS
 # ==========================================
-def auto_normalize_text(text: str) -> dict:
-    """
-    Normalize Thai text through a multi-step pipeline.
-    Returns a dict with intermediate results for UI display.
-    """
-    steps = {}
-
-    # Step 1: ThaiTextNormalizer (separator removal, char-sub, word mapping, elongation)
-    normalized = normalizer.normalize(text)
-    steps["step1_normalizer"] = normalized
-
-    # Step 2: PyThaiNLP Unicode normalization (composite char cleanup)
-    unicode_normalized = thai_normalize(normalized)
-    steps["step2_unicode"] = unicode_normalized
-
-    # Step 3: Tokenize with custom dictionary that knows slang terms
-    tokens = word_tokenize(unicode_normalized, engine='newmm', custom_dict=custom_trie)
-    steps["step3_tokenized"] = tokens
-
-    # Step 4: Spell correction on unknown Thai tokens
-    standard = set(thai_words())
-    final_tokens = []
-    changes_log = []
-    for word in tokens:
-        if not word.strip() or not re.match(r'^[ก-๙]+$', word):
-            final_tokens.append(word)
-        elif word in standard:
-            final_tokens.append(word)
-        elif len(word) > 1:
-            corrected = correct(word)
-            final_tokens.append(corrected)
-            if word != corrected:
-                changes_log.append({"word": word, "new_word": corrected, "action": "แก้คำผิด"})
-        else:
-            final_tokens.append(word)
-
-    steps["step4_tokens"] = final_tokens
-    steps["changes_log"] = changes_log
-    steps["final_text"] = "".join(final_tokens)
-    return steps
-
-
 def generate_audio(text: str) -> bytes:
-    tts = gTTS(text=text, lang='th', slow=False)
+    tts = gTTS(text=text, lang="th", slow=False)
     fp = io.BytesIO()
     tts.write_to_fp(fp)
     return fp.getvalue()
 
 # ==========================================
-# 5. SIDEBAR
-# ==========================================
-if 'history' not in st.session_state:
-    st.session_state['history'] = []
-
-st.sidebar.markdown("### Settings")
-if st.sidebar.button("Reset Cache", use_container_width=True):
-    st.cache_resource.clear()
-    st.rerun()
-
-engine_choice = st.sidebar.radio(
-    "Processing Engine:",
-    ["Smart AI (Google Gemini)", "Rule-based (PyThaiNLP)"],
-    help="AI understands context; rule-based is faster and offline."
-)
-
-# API key: use environment variable first, let user override in sidebar
-api_key = GEMINI_API_KEY
-if engine_choice == "Smart AI (Google Gemini)":
-    entered = st.sidebar.text_input("Gemini API Key (optional override):", type="password")
-    if entered:
-        api_key = entered
-    if not api_key:
-        st.sidebar.warning("Set GEMINI_API_KEY env var or enter a key above.")
-    st.sidebar.divider()
-
-# ==========================================
 # 6. MAIN UI
 # ==========================================
 st.markdown('<h1 class="main-title">Thai Text Normalizer</h1>', unsafe_allow_html=True)
+
+mode_badge = (
+    '<span class="badge-llm">Gemini AI</span>'
+    if normalizer.has_llm
+    else '<span class="badge-rules">Rule-based only (no API key)</span>'
+)
 st.markdown(
-    '<p class="sub-title">ระบบประมวลผลและแปลงข้อความภาษาวัยรุ่น สแลง หรือคำวิบัติ '
-    'ให้เป็นภาษาไทยที่ถูกต้องและเป็นทางการ</p>',
+    f'<p class="sub-title">ระบบ AI แปลงข้อความภาษาไทยไม่เป็นทางการ → ภาษาไทยมาตรฐาน '
+    f'{mode_badge}</p>',
     unsafe_allow_html=True,
 )
+
+if not normalizer.has_llm:
+    st.warning(
+        "ไม่พบ Gemini API Key — ใช้เฉพาะ Rule-based engine. "
+        "ใส่ API Key ในแถบด้านซ้ายเพื่อเปิดใช้งาน Gemini AI."
+    )
+
 st.divider()
 
 st.markdown("### Input Text")
 user_input = st.text_area(
-    "Enter noisy Thai text below:",
-    height=150,
-    placeholder="เช่น รับvายของ, ข า ย รถ, ขาeกระเป๋า, สวัสดีค้าบบบบ",
+    "Enter noisy Thai text:",
+    height=140,
+    placeholder="เช่น  ตะเองทำรายอยู่คับ / อ้วนน หิวข้าวจางงงเบยยย / ขาeกระเป๋าวันนี้คับ",
     label_visibility="collapsed",
 )
 
-col_btn, _ = st.columns([1, 2])
+col_btn, _ = st.columns([1, 3])
 with col_btn:
-    process_btn = st.button("Normalize & Correct", type="primary")
+    process_btn = st.button("Normalize", type="primary")
 
+# ==========================================
+# 7. PROCESS
+# ==========================================
 if process_btn:
     if not user_input.strip():
-        st.warning("Please enter some text before processing.")
-    elif engine_choice == "Smart AI (Google Gemini)":
-        if not api_key:
-            st.error("Please provide a Gemini API Key.")
-        else:
-            with st.spinner('AI is analyzing...'):
-                try:
-                    client = genai.Client(api_key=api_key)
-                    prompt = (
-                        "You are a linguistic expert in the Thai language. "
-                        "Convert the following informal Thai social media text into a formal, "
-                        "grammatically correct Thai sentence. Preserve the core meaning. "
-                        "Output ONLY the formal Thai sentence.\n\n"
-                        f"Informal Text: {user_input}\nFormal Text:"
-                    )
-                    response = client.models.generate_content(
-                        model='gemini-2.5-flash',
-                        contents=prompt,
-                    )
-                    cleaned_text = response.text.strip()
-
-                    st.session_state['history'].insert(0, {
-                        "original": user_input,
-                        "normalized": cleaned_text,
-                        "engine": "AI",
-                    })
-
-                    audio_bytes = generate_audio(cleaned_text)
-                    analysis = auto_normalize_text(user_input)
-                    ai_tokens = word_tokenize(cleaned_text, engine='newmm')
-
-                    st.divider()
-                    st.markdown(f"""
-                    <div class="result-card">
-                        <div class="result-header">Normalized Output (Gemini AI)</div>
-                        <div class="result-text">{cleaned_text}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-
-                    st.write("##")
-                    st.markdown("### Listen to the Result")
-                    st.audio(audio_bytes, format="audio/mp3")
-
-                    st.write("##")
-                    st.markdown("### Processing Steps")
-                    with st.container(border=True):
-                        st.markdown("##### 1. Text Normalization (ThaiTextNormalizer)")
-                        col_a, col_b = st.columns(2)
-                        col_a.info(f"**Input:** {user_input}")
-                        col_b.success(f"**After normalizer:** {analysis['step1_normalizer']}")
-                        st.divider()
-
-                        st.markdown("##### 2. Source Tokenization")
-                        st.code(" | ".join(analysis['step3_tokenized']), language="plaintext")
-                        st.divider()
-
-                        st.markdown("##### 3. AI Formalization Output")
-                        st.code(" | ".join(ai_tokens), language="plaintext")
-
-                except Exception as e:
-                    st.error(f"API Error: {str(e)}")
+        st.warning("กรุณาพิมพ์ข้อความก่อนกดปุ่ม")
     else:
-        with st.spinner('Processing...'):
-            results = auto_normalize_text(user_input)
-            cleaned_text = results["final_text"]
+        with st.spinner("กำลังประมวลผล..."):
+            # Phase 1: rules only
+            preprocessed = normalizer._rules.normalize(user_input)
+            # Phase 2: full pipeline (rules + LLM)
+            final_text = normalizer.normalize(user_input)
 
-            st.session_state['history'].insert(0, {
-                "original": user_input,
-                "normalized": cleaned_text,
-                "engine": "Rule-Based",
-            })
+        # Save history
+        st.session_state["history"].insert(0, {
+            "original": user_input,
+            "preprocessed": preprocessed,
+            "normalized": final_text,
+        })
 
-            audio_bytes = generate_audio(cleaned_text)
+        audio_bytes = generate_audio(final_text)
 
+        # --- Result card ---
         st.divider()
         st.markdown(f"""
         <div class="result-card">
             <div class="result-header">Normalized Output</div>
-            <div class="result-text">{cleaned_text}</div>
+            <div class="result-text">{final_text}</div>
         </div>
         """, unsafe_allow_html=True)
 
-        st.write("##")
-        st.markdown("### Listen to the Result")
+        # --- Audio ---
+        st.write("")
+        st.markdown("### Listen")
         st.audio(audio_bytes, format="audio/mp3")
 
-        st.write("##")
+        # --- Processing steps ---
+        st.write("")
         st.markdown("### Processing Steps")
-        with st.container(border=True):
-            st.markdown("##### 1. ThaiTextNormalizer")
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.markdown(f"""
+            <div class="step-card">
+                <div class="step-label">1. Original Input</div>
+                <div class="step-value">{user_input}</div>
+            </div>""", unsafe_allow_html=True)
+        with col2:
+            st.markdown(f"""
+            <div class="step-card">
+                <div class="step-label">2. Rule-based Pre-processing</div>
+                <div class="step-value">{preprocessed}</div>
+            </div>""", unsafe_allow_html=True)
+        with col3:
+            label = "3. Gemini LLM Output" if normalizer.has_llm else "3. Final Output (rules only)"
+            st.markdown(f"""
+            <div class="step-card">
+                <div class="step-label">{label}</div>
+                <div class="step-value">{final_text}</div>
+            </div>""", unsafe_allow_html=True)
+
+        # --- Token view ---
+        with st.expander("Token breakdown"):
             col_a, col_b = st.columns(2)
-            col_a.info(f"**Input:** {user_input}")
-            col_b.success(f"**After normalizer:** {results['step1_normalizer']}")
-            st.divider()
+            with col_a:
+                st.caption("Input tokens")
+                src_tokens = word_tokenize(user_input, engine="newmm")
+                st.code(" | ".join(src_tokens), language="plaintext")
+            with col_b:
+                st.caption("Output tokens")
+                out_tokens = word_tokenize(final_text, engine="newmm")
+                st.code(" | ".join(out_tokens), language="plaintext")
 
-            st.markdown("##### 2. Tokenization")
-            st.code(" | ".join(results['step3_tokenized']), language="plaintext")
-            st.divider()
-
-            st.markdown("##### 3. Transformation Log")
-            if results['changes_log']:
-                for log in results['changes_log']:
-                    st.markdown(f"- `{log['word']}` -> `{log['new_word']}` ({log['action']})")
-            else:
-                st.markdown("- No further corrections needed.")
+        st.caption(f"Cache size: {normalizer.cache_size()} entries")
 
 # ==========================================
-# 7. HISTORY
+# 8. HISTORY
 # ==========================================
-if st.session_state['history']:
-    st.write("##")
-    st.markdown("### Recent History")
-    for item in st.session_state['history'][:10]:
-        with st.expander(f"[{item['engine']}] \"{item['original'][:40]}...\""):
-            st.markdown(f"**Noisy:** {item['original']}")
-            st.markdown(f"**Formal:** {item['normalized']}")
+if st.session_state["history"]:
+    st.write("")
+    st.markdown("### History")
+    for item in st.session_state["history"][:10]:
+        with st.expander(f'"{item["original"][:50]}"'):
+            cols = st.columns(3)
+            cols[0].markdown(f"**Original**  \n{item['original']}")
+            cols[1].markdown(f"**Pre-processed**  \n{item['preprocessed']}")
+            cols[2].markdown(f"**Final**  \n{item['normalized']}")
 
     if st.button("Clear History", use_container_width=True):
-        st.session_state['history'] = []
+        st.session_state["history"] = []
         st.rerun()
 
 st.markdown("""
 <div class="footer">
-    Developed by Baitong | AI Student @ Faculty of Science and Technology, Huachiew Chalermprakiet University (HCU)
+    Developed by Baitong | AI Student @ Faculty of Science and Technology,
+    Huachiew Chalermprakiet University (HCU)
 </div>
 """, unsafe_allow_html=True)

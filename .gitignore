@@ -8,6 +8,12 @@ models/vocab_cache.pkl
 # Large generated data files
 wisesight_raw.csv
 slang_dataset.csv
+data/thai_parallel_corpus.csv
+data/.corpus_checkpoint.json
+data/normalizer_cache.json
+
+# Fine-tuned model (large, rebuild with finetune_mt5.py)
+models/mt5_normalizer/
 
 # Python
 __pycache__/

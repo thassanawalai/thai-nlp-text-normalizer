@@ -6,3 +6,6 @@ gTTS
 google-generativeai
 datasets
 tqdm
+transformers
+sentencepiece
+accelerate
