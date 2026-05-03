@@ -1,10 +1,22 @@
-# Ignore Python system files
-__pycache__/
-*.pyc
+# Secrets
+.env
 
-# Ignore large raw datasets (we only include slang_dataset.csv)
+# Vocab cache (auto-rebuilt on first run)
+models/vocab_cache.pkl
+*.pkl
+
+# Large generated data files
 wisesight_raw.csv
+slang_dataset.csv
 
-# Ignore virtual environments
-env/
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
 venv/
+env/
+
+# IDE
+.vscode/
+.idea/
